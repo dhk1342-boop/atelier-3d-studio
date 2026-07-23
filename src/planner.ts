@@ -30,6 +30,7 @@ import type {
 
 const STORAGE_KEY = "atelier-3d-scene-v2";
 const SNAP_STEP = 0.25;
+const KEYBOARD_NUDGE_STEP = 0.01;
 const ROTATION_STEP = 15;
 const MIN_WALL_LENGTH = 0.45;
 const MIN_FLOOR_ZONE_SIZE = 0.3;
@@ -704,7 +705,7 @@ export class InteriorStudio {
 
             <div class="viewport-note">
               <span>단축키</span>
-              <span>Delete 삭제, 1-4 시점, G/R/S 도구, W 벽 그리기, Esc 종료</span>
+              <span>Delete 삭제, 방향키 1cm 이동, Ctrl+Q/W/E/R 시점, G/R/S 도구, W 벽 그리기, Esc 종료</span>
             </div>
           </section>
 
@@ -896,6 +897,9 @@ export class InteriorStudio {
             </div>
             <ul class="shortcut-list">
               <li><strong>드래그</strong>로 카메라를 회전하거나 이동합니다.</li>
+              <li><strong>Ctrl + 좌클릭 드래그</strong>로 3D, 평면, 정면, 측면에서 시점을 이동합니다.</li>
+              <li><strong>방향키</strong>로 선택한 항목을 1cm 단위로 미세 이동할 수 있습니다.</li>
+              <li><strong>Ctrl + Q / W / E / R</strong>로 3D, 평면, 정면, 측면 시점을 전환합니다.</li>
               <li><strong>크기 / S</strong>로 가구 크기 핸들을 직접 드래그할 수 있습니다.</li>
               <li><strong>W</strong>로 평면 보기에서 벽 그리기 모드를 켜고 끕니다.</li>
               <li><strong>두 번 클릭</strong>하면 각 벽의 시작점과 끝점을 정합니다.</li>
@@ -1108,6 +1112,39 @@ export class InteriorStudio {
         return;
       }
 
+      if (event.ctrlKey) {
+        const lowerKey = event.key.toLowerCase();
+        if (lowerKey === "q") {
+          event.preventDefault();
+          this.switchView("3d");
+          return;
+        }
+
+        if (lowerKey === "w") {
+          event.preventDefault();
+          this.switchView("top");
+          return;
+        }
+
+        if (lowerKey === "e") {
+          event.preventDefault();
+          this.switchView("front");
+          return;
+        }
+
+        if (lowerKey === "r") {
+          event.preventDefault();
+          this.switchView("side");
+          return;
+        }
+      }
+
+      if (event.key.startsWith("Arrow")) {
+        event.preventDefault();
+        this.nudgeSelectedWithKeyboard(event.key);
+        return;
+      }
+
       if (event.key === "Delete" || event.key === "Backspace") {
         event.preventDefault();
         this.deleteSelected();
@@ -1148,24 +1185,6 @@ export class InteriorStudio {
         return;
       }
 
-      if (event.key === "1") {
-        this.switchView("3d");
-        return;
-      }
-
-      if (event.key === "2") {
-        this.switchView("top");
-        return;
-      }
-
-      if (event.key === "3") {
-        this.switchView("front");
-        return;
-      }
-
-      if (event.key === "4") {
-        this.switchView("side");
-      }
     });
 
     window.addEventListener("keyup", (event) => {
@@ -1183,6 +1202,10 @@ export class InteriorStudio {
       },
       { capture: true }
     );
+
+    this.renderer.domElement.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+    });
 
     this.renderer.domElement.addEventListener("pointerdown", (event) => {
       this.handleViewportPointerDown(event);
@@ -1217,6 +1240,10 @@ export class InteriorStudio {
   }
 
   private handleViewportPointerDown(event: PointerEvent): void {
+    if (event.button !== 0 || event.ctrlKey) {
+      return;
+    }
+
     const transformAxis = (this.transformControls as unknown as { axis?: string | null }).axis;
     if (transformAxis) {
       return;
@@ -2953,6 +2980,47 @@ export class InteriorStudio {
 
   private syncModifierNavigation(isCtrlPressed: boolean): void {
     this.perspectiveControls.mouseButtons.LEFT = isCtrlPressed ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
+    this.orthoControls.mouseButtons.LEFT = THREE.MOUSE.PAN;
+    this.orthoControls.mouseButtons.RIGHT = THREE.MOUSE.PAN;
+  }
+
+  private nudgeSelectedWithKeyboard(key: string): void {
+    const selected = this.getSelectedEntity();
+    if (!selected) {
+      return;
+    }
+
+    let deltaX = 0;
+    let deltaZ = 0;
+
+    if (key === "ArrowLeft") {
+      deltaX = -KEYBOARD_NUDGE_STEP;
+    } else if (key === "ArrowRight") {
+      deltaX = KEYBOARD_NUDGE_STEP;
+    } else if (key === "ArrowUp") {
+      deltaZ = -KEYBOARD_NUDGE_STEP;
+    } else if (key === "ArrowDown") {
+      deltaZ = KEYBOARD_NUDGE_STEP;
+    }
+
+    if (!deltaX && !deltaZ) {
+      return;
+    }
+
+    selected.item.group.position.x = roundTo(selected.item.group.position.x + deltaX, KEYBOARD_NUDGE_STEP);
+    selected.item.group.position.z = roundTo(selected.item.group.position.z + deltaZ, KEYBOARD_NUDGE_STEP);
+    selected.item.group.position.y = 0;
+
+    if (selected.kind === "furniture") {
+      this.clampFurniture(selected.item);
+    } else {
+      this.clampObjectToRoom(selected.item.group);
+    }
+
+    selected.item.group.position.x = roundTo(selected.item.group.position.x, KEYBOARD_NUDGE_STEP);
+    selected.item.group.position.z = roundTo(selected.item.group.position.z, KEYBOARD_NUDGE_STEP);
+    this.updateSelectionState();
+    this.persistScene();
   }
 
   private resize(): void {
