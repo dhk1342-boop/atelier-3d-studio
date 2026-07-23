@@ -14,6 +14,25 @@ Shapr3D식 카메라 조작과 어반베이스식 공간 연출을 참고한 브
 - Supabase 연결 시 클라우드 저장과 여러 기기 동기화
 - 평면 보기에서 벽을 한 구간씩 그리는 기능
 
+## 웹 배포
+
+이 저장소는 `main` 브랜치에 push 할 때마다 GitHub Pages로 자동 배포되도록 설정해 두었습니다.
+
+배포 주소 형식은 아래와 같습니다.
+
+```text
+https://dhk1342-boop.github.io/atelier-3d-studio/
+```
+
+처음 한 번만 GitHub 저장소에서 아래를 설정해 주세요.
+
+1. 저장소 `Settings`
+2. 왼쪽 `Pages`
+3. `Build and deployment`
+4. `Source`를 `GitHub Actions`로 변경
+
+그러면 이후부터는 `git push` 할 때마다 자동으로 웹사이트가 다시 배포됩니다.
+
 ## 빠른 실행
 
 매번 터미널 명령을 입력하고 싶지 않다면 아래 파일을 더블클릭하면 됩니다.
@@ -69,7 +88,24 @@ cp .env.example .env
 - `VITE_SUPABASE_ANON_KEY`
 - `VITE_SUPABASE_TABLE`
 
-설정을 넣고 앱을 다시 실행하면 `프로젝트 코드`, `클라우드 저장`, `자동저장 켜기`, `공유 링크 복사`가 함께 동작합니다.
+로컬에서만 쓸 때는 `.env`를 사용하면 되고, GitHub Pages 배포에서 자동저장까지 켜려면 GitHub 저장소에도 같은 값을 넣어야 합니다.
+
+저장소에서 아래 경로로 들어가세요.
+
+1. `Settings`
+2. `Secrets and variables`
+3. `Actions`
+4. `Variables` 탭
+
+그리고 아래 3개를 추가하세요.
+
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+- `VITE_SUPABASE_TABLE`
+
+`VITE_SUPABASE_ANON_KEY`는 브라우저용 공개 키이므로 `Variables`에 넣어도 됩니다. `service_role` 키는 절대 넣으면 안 됩니다.
+
+설정을 넣고 다시 `git push` 하면 GitHub Pages 배포본에서도 `프로젝트 코드`, `클라우드 저장`, `자동저장 켜기`, `공유 링크 복사`가 함께 동작합니다.
 
 ## 로컬 실행
 
@@ -87,4 +123,11 @@ env PATH="/Users/kimdohyeon/.cache/codex-runtimes/codex-primary-runtime/dependen
 ```bash
 env PATH="/Users/kimdohyeon/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH" \
   ./node_modules/.bin/vite build
+```
+
+GitHub Pages용 빌드는 아래 명령으로 확인할 수 있습니다.
+
+```bash
+env PATH="/Users/kimdohyeon/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH" \
+  ./node_modules/.bin/vite build --mode github-pages
 ```
