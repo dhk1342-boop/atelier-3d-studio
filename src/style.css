@@ -114,10 +114,16 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-width: 0;
 }
 
 .panel-head {
   margin-bottom: 16px;
+}
+
+.panel-head > *,
+.panel-subhead > * {
+  min-width: 0;
 }
 
 .panel-heading {
@@ -131,6 +137,8 @@ button {
   font-family: "Space Grotesk", sans-serif;
   font-weight: 700;
   font-size: 1.08rem;
+  line-height: 1.18;
+  word-break: keep-all;
 }
 
 .panel-pill {
@@ -142,6 +150,9 @@ button {
   background: rgba(47, 36, 29, 0.08);
   color: var(--muted);
   font-size: 0.8rem;
+  line-height: 1.28;
+  text-align: center;
+  word-break: keep-all;
 }
 
 .panel-head span,
@@ -296,6 +307,7 @@ button {
   color: var(--text);
   font-size: 0.92rem;
   padding: 10px 14px;
+  white-space: nowrap;
   transition: background 180ms ease, color 180ms ease, border-color 180ms ease, transform 180ms ease;
 }
 
@@ -403,13 +415,33 @@ button {
 
 .workspace-bottom {
   display: grid;
-  grid-template-columns: minmax(0, 0.92fr) minmax(0, 0.92fr) minmax(0, 1.16fr) minmax(0, 1.16fr);
+  grid-template-columns: minmax(236px, 1.04fr) minmax(236px, 1.04fr) minmax(0, 1.18fr) minmax(0, 1.18fr);
   gap: 18px;
   align-items: start;
 }
 
 .panel-dock {
   min-height: 100%;
+}
+
+.panel-dock .panel-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+}
+
+.panel-dock .panel-heading {
+  min-width: 0;
+}
+
+.panel-dock .panel-head h2 {
+  font-size: 1rem;
+}
+
+.panel-dock .panel-pill {
+  padding: 5px 9px;
+  font-size: 0.74rem;
 }
 
 .panel-wall,
