@@ -203,6 +203,9 @@ function groupByCategory(presets: FurniturePreset[]): Map<string, FurniturePrese
   return map;
 }
 
+const CATALOG_GROUPS = [...groupByCategory(FURNITURE_PRESETS).entries()];
+const DEFAULT_CATALOG_CATEGORY = CATALOG_GROUPS[0]?.[0] ?? "";
+
 function createFloorTexture(baseColor: string): THREE.CanvasTexture {
   const canvas = document.createElement("canvas");
   canvas.width = 1024;
@@ -342,7 +345,7 @@ export class InteriorStudio {
   private selected: SelectionState = null;
   private viewMode: ViewMode = "3d";
   private toolMode: ToolMode = "translate";
-  private catalogFilter = "전체";
+  private catalogOpenCategory = DEFAULT_CATALOG_CATEGORY;
   private draftMode: DraftMode = "select";
   private draftAnchor: THREE.Vector3 | null = null;
   private draftWall: DraftWallSettings = {
@@ -465,40 +468,47 @@ export class InteriorStudio {
   }
 
   private renderShell(): string {
-    const groupedPresets = [...groupByCategory(FURNITURE_PRESETS).entries()];
-    const categoryTabs = ["전체", ...groupedPresets.map(([category]) => category)];
-    const filterMarkup = categoryTabs
-      .map(
-        (category) => `
-          <button
-            type="button"
-            class="filter-tab${category === this.catalogFilter ? " is-active" : ""}"
-            data-category-filter="${category}"
-          >
-            ${category}
-          </button>
-        `
-      )
-      .join("");
     const catalogMarkup = `
-      <div class="filter-tab-row">
-        ${filterMarkup}
-      </div>
-      <div class="catalog-grid">
-        ${FURNITURE_PRESETS.map(
-          (preset) => `
-            <button
-              type="button"
-              class="catalog-card"
-              data-preset="${preset.id}"
-              data-category="${preset.category}"
-              ${this.catalogFilter !== "전체" && preset.category !== this.catalogFilter ? "hidden" : ""}
-            >
-              <span class="catalog-label">${preset.label}</span>
-              <span class="catalog-size">${preset.size[0].toFixed(1)} x ${preset.size[2].toFixed(1)} m</span>
-            </button>
-          `
-        ).join("")}
+      <div class="catalog-accordion">
+        ${CATALOG_GROUPS.map(([category, presets]) => {
+          const isOpen = category === this.catalogOpenCategory;
+          return `
+            <section class="catalog-group${isOpen ? " is-open" : ""}">
+              <button
+                type="button"
+                class="catalog-group-toggle"
+                data-category-toggle="${category}"
+                aria-expanded="${isOpen}"
+              >
+                <span class="catalog-group-copy">
+                  <strong>${category}</strong>
+                  <span>${presets.length}개</span>
+                </span>
+                <span class="catalog-group-arrow">${isOpen ? "-" : "+"}</span>
+              </button>
+
+              <div class="catalog-group-panel"${isOpen ? "" : " hidden"}>
+                <div class="catalog-grid catalog-grid-compact">
+                  ${presets
+                    .map(
+                      (preset) => `
+                        <button
+                          type="button"
+                          class="catalog-card"
+                          data-preset="${preset.id}"
+                          data-category="${preset.category}"
+                        >
+                          <span class="catalog-label">${preset.label}</span>
+                          <span class="catalog-size">${preset.size[0].toFixed(1)} x ${preset.size[2].toFixed(1)} m</span>
+                        </button>
+                      `
+                    )
+                    .join("")}
+                </div>
+              </div>
+            </section>
+          `;
+        }).join("")}
       </div>
     `;
 
@@ -858,9 +868,9 @@ export class InteriorStudio {
         return;
       }
 
-      const filterButton = target.closest<HTMLElement>("[data-category-filter]");
-      if (filterButton) {
-        this.setCatalogFilter(filterButton.dataset.categoryFilter ?? "전체");
+      const categoryToggle = target.closest<HTMLElement>("[data-category-toggle]");
+      if (categoryToggle) {
+        this.toggleCatalogCategory(categoryToggle.dataset.categoryToggle ?? "");
         return;
       }
 
@@ -1022,18 +1032,26 @@ export class InteriorStudio {
     });
   }
 
-  private setCatalogFilter(category: string): void {
-    this.catalogFilter = category;
+  private toggleCatalogCategory(category: string): void {
+    this.catalogOpenCategory = this.catalogOpenCategory === category ? "" : category;
 
-    const filterButtons = this.root.querySelectorAll<HTMLElement>("[data-category-filter]");
-    filterButtons.forEach((button) => {
-      button.classList.toggle("is-active", button.dataset.categoryFilter === category);
-    });
+    const sections = this.root.querySelectorAll<HTMLElement>(".catalog-group");
+    sections.forEach((section) => {
+      const button = section.querySelector<HTMLElement>("[data-category-toggle]");
+      const panel = section.querySelector<HTMLElement>(".catalog-group-panel");
+      const arrow = section.querySelector<HTMLElement>(".catalog-group-arrow");
+      const isOpen = button?.dataset.categoryToggle === this.catalogOpenCategory;
 
-    const presetCards = this.root.querySelectorAll<HTMLElement>("[data-preset]");
-    presetCards.forEach((card) => {
-      const cardCategory = card.dataset.category ?? "";
-      card.hidden = category !== "전체" && cardCategory !== category;
+      section.classList.toggle("is-open", Boolean(isOpen));
+      button?.setAttribute("aria-expanded", String(Boolean(isOpen)));
+
+      if (panel) {
+        panel.hidden = !isOpen;
+      }
+
+      if (arrow) {
+        arrow.textContent = isOpen ? "-" : "+";
+      }
     });
   }
 
