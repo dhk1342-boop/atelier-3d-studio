@@ -17,9 +17,11 @@ import {
   saveSceneToCloud
 } from "./storage";
 import type {
+  DraftFloorZoneSettings,
   DraftWallSettings,
   FurniturePreset,
   SceneSnapshot,
+  SerializedFloorZone,
   SerializedObject,
   SerializedWall,
   ToolMode,
@@ -30,6 +32,9 @@ const STORAGE_KEY = "atelier-3d-scene-v2";
 const SNAP_STEP = 0.25;
 const ROTATION_STEP = 15;
 const MIN_WALL_LENGTH = 0.45;
+const MIN_FLOOR_ZONE_SIZE = 0.3;
+const MIN_FLOOR_ZONE_LEVEL = 0.05;
+const MAX_FLOOR_ZONE_LEVEL = 1.5;
 const LEGACY_LABEL_MAP: Record<string, string> = {
   "Cloud Sofa": "클라우드 소파",
   "Coffee Table": "커피 테이블",
@@ -59,7 +64,7 @@ const LEGACY_LABEL_MAP: Record<string, string> = {
   "Reading Lamp": "독서등"
 };
 
-type DraftMode = "select" | "wall";
+type DraftMode = "select" | "wall" | "floor";
 
 interface FurnitureInstance {
   id: string;
@@ -79,9 +84,20 @@ interface WallInstance {
   baseThickness: number;
 }
 
+interface FloorZoneInstance {
+  id: string;
+  group: THREE.Group;
+  label: string;
+  color: string;
+  width: number;
+  depth: number;
+  level: number;
+}
+
 type SelectionState =
   | { kind: "furniture"; id: string }
   | { kind: "wall"; id: string }
+  | { kind: "floorZone"; id: string }
   | null;
 
 interface StudioDom {
@@ -89,6 +105,7 @@ interface StudioDom {
   toastStack: HTMLDivElement;
   selectionBanner: HTMLDivElement;
   draftNote: HTMLDivElement;
+  floorZoneNote: HTMLDivElement;
   selectedEmpty: HTMLDivElement;
   selectedFields: HTMLDivElement;
   selectedKind: HTMLElement;
@@ -107,6 +124,10 @@ interface StudioDom {
   draftInputs: {
     thickness: HTMLInputElement;
     height: HTMLInputElement;
+    color: HTMLInputElement;
+  };
+  floorZoneInputs: {
+    level: HTMLInputElement;
     color: HTMLInputElement;
   };
   cloud: {
@@ -301,6 +322,66 @@ function setWallColor(group: THREE.Group, color: string): void {
   }
 }
 
+function createFloorZoneGroup(width: number, depth: number, level: number, color: string): THREE.Group {
+  const group = new THREE.Group();
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(width, Math.abs(level), depth),
+    new THREE.MeshStandardMaterial({
+      color,
+      roughness: 0.78,
+      metalness: 0.02
+    })
+  );
+  mesh.position.y = level * 0.5;
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+
+  const outline = new THREE.LineSegments(
+    new THREE.EdgesGeometry(mesh.geometry),
+    new THREE.LineBasicMaterial({
+      color: "#3f3026",
+      transparent: true,
+      opacity: 0.28
+    })
+  );
+  outline.position.copy(mesh.position);
+
+  group.add(mesh);
+  group.add(outline);
+  group.userData.floorZoneMesh = mesh;
+  group.userData.floorZoneOutline = outline;
+  return group;
+}
+
+function updateFloorZoneGeometry(group: THREE.Group, width: number, depth: number, level: number): void {
+  const mesh = group.userData.floorZoneMesh as THREE.Mesh | undefined;
+  const outline = group.userData.floorZoneOutline as THREE.LineSegments | undefined;
+  if (!mesh || !outline) {
+    return;
+  }
+
+  const geometry = new THREE.BoxGeometry(width, Math.abs(level), depth);
+  mesh.geometry.dispose();
+  mesh.geometry = geometry;
+  mesh.position.y = level * 0.5;
+
+  outline.geometry.dispose();
+  outline.geometry = new THREE.EdgesGeometry(geometry);
+  outline.position.copy(mesh.position);
+}
+
+function setFloorZoneColor(group: THREE.Group, color: string): void {
+  const mesh = group.userData.floorZoneMesh as THREE.Mesh | undefined;
+  if (!mesh) {
+    return;
+  }
+
+  const material = mesh.material;
+  if (material instanceof THREE.MeshStandardMaterial) {
+    material.color.set(color);
+  }
+}
+
 export class InteriorStudio {
   private readonly root: HTMLElement;
   private readonly dom: StudioDom;
@@ -314,6 +395,7 @@ export class InteriorStudio {
   private readonly raycaster = new THREE.Raycaster();
   private readonly pointer = new THREE.Vector2();
   private readonly roomGroup = new THREE.Group();
+  private readonly floorZoneGroup = new THREE.Group();
   private readonly wallGroup = new THREE.Group();
   private readonly furnitureGroup = new THREE.Group();
   private readonly selectionBox = new THREE.BoxHelper(new THREE.Object3D(), 0xdb5c3f);
@@ -338,8 +420,17 @@ export class InteriorStudio {
       metalness: 0.02
     })
   );
+  private readonly draftAreaLine = new THREE.Line(
+    new THREE.BufferGeometry(),
+    new THREE.LineDashedMaterial({
+      color: 0x4e7a6f,
+      dashSize: 0.16,
+      gapSize: 0.12
+    })
+  );
   private readonly furniture = new Map<string, FurnitureInstance>();
   private readonly walls = new Map<string, WallInstance>();
+  private readonly floorZones = new Map<string, FloorZoneInstance>();
   private activeCamera: THREE.Camera;
   private room = { ...DEFAULT_ROOM };
   private selected: SelectionState = null;
@@ -352,6 +443,10 @@ export class InteriorStudio {
     thickness: 0.14,
     height: 2.8,
     color: DEFAULT_ROOM.wallColor
+  };
+  private draftFloorZone: DraftFloorZoneSettings = {
+    level: 0.15,
+    color: "#c5ad90"
   };
   private cloudProjectId = "";
   private cloudAutosaveEnabled = false;
@@ -428,10 +523,12 @@ export class InteriorStudio {
 
     this.draftLine.visible = false;
     this.draftMarker.visible = false;
+    this.draftAreaLine.visible = false;
     this.draftLine.position.y = 0.02;
     this.draftMarker.position.y = 0.06;
 
     this.scene.add(this.roomGroup);
+    this.scene.add(this.floorZoneGroup);
     this.scene.add(this.wallGroup);
     this.scene.add(this.furnitureGroup);
     this.scene.add(this.floorHitArea);
@@ -440,6 +537,7 @@ export class InteriorStudio {
     this.scene.add(this.ambientLight);
     this.scene.add(this.sunLight);
     this.scene.add(this.draftLine);
+    this.scene.add(this.draftAreaLine);
     this.scene.add(this.draftMarker);
 
     this.sunLight.position.set(5, 11, 4);
@@ -567,6 +665,7 @@ export class InteriorStudio {
             <div class="toolbar-cluster">
               <button type="button" class="toolbar-pill" data-draft="select">선택</button>
               <button type="button" class="toolbar-pill" data-draft="wall">벽 그리기</button>
+              <button type="button" class="toolbar-pill" data-draft="floor">단차 구역</button>
               <button type="button" class="toolbar-pill" data-action="finish-draft">그리기 종료</button>
             </div>
 
@@ -712,6 +811,32 @@ export class InteriorStudio {
 
           <section class="panel">
             <div class="panel-head">
+              <h2>바닥 단차</h2>
+              <span class="panel-pill">사각 구역</span>
+            </div>
+
+            <div class="draft-actions">
+              <button type="button" class="toolbar-pill" data-draft="select">선택</button>
+              <button type="button" class="toolbar-pill" data-draft="floor">단차 구역</button>
+              <button type="button" class="toolbar-pill" data-action="clear-floor-zones">단차 모두 삭제</button>
+            </div>
+
+            <div class="form-grid compact-grid">
+              <label class="field">
+                <span>높낮이 (m)</span>
+                <input type="number" min="-1.5" max="1.5" step="0.05" value="0.15" data-floor-zone-input="level" />
+              </label>
+              <label class="field field-full">
+                <span>단차 색상</span>
+                <input type="color" value="#c5ad90" data-floor-zone-input="color" />
+              </label>
+            </div>
+
+            <div class="draft-note" data-floor-zone-note>평면 보기에서 단차 구역을 켠 뒤 첫 점과 반대쪽 점을 차례로 클릭하세요. 양수는 올림, 음수는 내림입니다.</div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
               <div class="panel-heading">
                 <h2>선택 항목</h2>
                 <span class="panel-pill" data-selected-kind>선택 없음</span>
@@ -741,7 +866,7 @@ export class InteriorStudio {
                 </label>
                 <label class="field">
                   <span data-selection-label="height">높이</span>
-                  <input type="number" min="0.1" max="6" step="0.05" data-selection-input="height" />
+                  <input type="number" min="-1.5" max="6" step="0.05" data-selection-input="height" />
                 </label>
                 <label class="field">
                   <span data-selection-label="x">위치 X</span>
@@ -807,6 +932,7 @@ export class InteriorStudio {
       toastStack: query<HTMLDivElement>(".toast-stack"),
       selectionBanner: query<HTMLDivElement>("[data-selection-banner]"),
       draftNote: query<HTMLDivElement>("[data-draft-note]"),
+      floorZoneNote: query<HTMLDivElement>("[data-floor-zone-note]"),
       selectedEmpty: query<HTMLDivElement>("[data-selected-empty]"),
       selectedFields: query<HTMLDivElement>("[data-selected-fields]"),
       selectedKind: query<HTMLElement>("[data-selected-kind]"),
@@ -826,6 +952,10 @@ export class InteriorStudio {
         thickness: query<HTMLInputElement>("[data-draft-input='thickness']"),
         height: query<HTMLInputElement>("[data-draft-input='height']"),
         color: query<HTMLInputElement>("[data-draft-input='color']")
+      },
+      floorZoneInputs: {
+        level: query<HTMLInputElement>("[data-floor-zone-input='level']"),
+        color: query<HTMLInputElement>("[data-floor-zone-input='color']")
       },
       cloud: {
         project: query<HTMLInputElement>("[data-cloud-input='project']"),
@@ -917,6 +1047,12 @@ export class InteriorStudio {
       });
     });
 
+    (Object.entries(this.dom.floorZoneInputs) as [keyof DraftFloorZoneSettings, HTMLInputElement][]).forEach(([key, input]) => {
+      input.addEventListener("input", () => {
+        this.handleFloorZoneInput(key, input.value);
+      });
+    });
+
     this.dom.cloud.project.addEventListener("change", () => {
       this.handleCloudProjectInput(this.dom.cloud.project.value);
     });
@@ -927,7 +1063,16 @@ export class InteriorStudio {
         return;
       }
 
-      selected.item.label = this.dom.selectionInputs.label.value.trim() || (selected.kind === "wall" ? "벽 구간" : selected.item.preset.label);
+      let fallbackLabel = "항목";
+      if (selected.kind === "wall") {
+        fallbackLabel = "벽 구간";
+      } else if (selected.kind === "floorZone") {
+        fallbackLabel = "바닥 단차";
+      } else {
+        fallbackLabel = selected.item.preset.label;
+      }
+
+      selected.item.label = this.dom.selectionInputs.label.value.trim() || fallbackLabel;
       this.updateSelectionState();
       this.persistScene();
     });
@@ -947,8 +1092,10 @@ export class InteriorStudio {
       selected.item.color = this.dom.selectionInputs.color.value;
       if (selected.kind === "furniture") {
         applyFurnitureColor(selected.item.group, selected.item.color, selected.item.preset.accent);
-      } else {
+      } else if (selected.kind === "wall") {
         setWallColor(selected.item.group, selected.item.color);
+      } else {
+        setFloorZoneColor(selected.item.group, selected.item.color);
       }
       this.persistScene();
     });
@@ -1067,13 +1214,31 @@ export class InteriorStudio {
         return;
       }
 
-      this.handleDraftClick(floorHit.point);
+      this.handleWallDraftClick(floorHit.point);
+      return;
+    }
+
+    if (this.draftMode === "floor") {
+      if (!floorHit) {
+        return;
+      }
+
+      this.handleFloorZoneDraftClick(floorHit.point);
       return;
     }
 
     this.refreshRayFromEvent(event);
-    const hit = this.raycaster.intersectObjects([...this.wallGroup.children, ...this.furnitureGroup.children], true)[0];
+    const hit = this.raycaster.intersectObjects(
+      [...this.floorZoneGroup.children, ...this.wallGroup.children, ...this.furnitureGroup.children],
+      true
+    )[0];
     if (hit) {
+      const floorZone = this.findFloorZoneFromObject(hit.object);
+      if (floorZone) {
+        this.selectFloorZone(floorZone.id);
+        return;
+      }
+
       const wall = this.findWallFromObject(hit.object);
       if (wall) {
         this.selectWall(wall.id);
@@ -1093,7 +1258,7 @@ export class InteriorStudio {
   }
 
   private handleViewportPointerMove(event: PointerEvent): void {
-    if (this.draftMode !== "wall" || !this.draftAnchor) {
+    if ((this.draftMode !== "wall" && this.draftMode !== "floor") || !this.draftAnchor) {
       return;
     }
 
@@ -1102,8 +1267,14 @@ export class InteriorStudio {
       return;
     }
 
-    const point = this.normalizeDraftPoint(floorHit.point);
-    this.updateDraftPreview(point);
+    if (this.draftMode === "wall") {
+      const point = this.normalizeWallDraftPoint(floorHit.point);
+      this.updateWallDraftPreview(point);
+      return;
+    }
+
+    const point = this.normalizeFloorZoneDraftPoint(floorHit.point);
+    this.updateFloorZoneDraftPreview(point);
   }
 
   private refreshRayFromEvent(event: PointerEvent): void {
@@ -1155,6 +1326,9 @@ export class InteriorStudio {
         break;
       case "clear-walls":
         this.clearWalls(true);
+        break;
+      case "clear-floor-zones":
+        this.clearFloorZones(true);
         break;
       default:
         break;
@@ -1239,7 +1413,9 @@ export class InteriorStudio {
         label: item.label
       })),
       walls: [...this.walls.values()].map((item) => this.serializeWall(item)),
-      draftWall: { ...this.draftWall }
+      floorZones: [...this.floorZones.values()].map((item) => this.serializeFloorZone(item)),
+      draftWall: { ...this.draftWall },
+      draftFloorZone: { ...this.draftFloorZone }
     };
   }
 
@@ -1250,13 +1426,19 @@ export class InteriorStudio {
       height: snapshot.draftWall?.height ?? 2.8,
       color: snapshot.draftWall?.color ?? snapshot.room?.wallColor ?? DEFAULT_ROOM.wallColor
     };
+    this.draftFloorZone = {
+      level: snapshot.draftFloorZone?.level ?? 0.15,
+      color: snapshot.draftFloorZone?.color ?? "#c5ad90"
+    };
 
     this.rebuildRoom();
     this.clearFurniture(false);
-    this.clearWalls(false);
+    this.clearWalls(false, false);
+    this.clearFloorZones(false, false);
 
     (snapshot.objects ?? []).forEach((serialized) => this.instantiateFurniture(serialized, false));
     (snapshot.walls ?? []).forEach((serialized) => this.instantiateWall(serialized, false));
+    (snapshot.floorZones ?? []).forEach((serialized) => this.instantiateFloorZone(serialized, false));
 
     this.updateMetrics();
     this.clearSelection();
@@ -1461,6 +1643,29 @@ export class InteriorStudio {
     this.persistScene();
   }
 
+  private handleFloorZoneInput(key: keyof DraftFloorZoneSettings, value: string): void {
+    if (key === "color") {
+      this.draftFloorZone.color = value;
+      this.syncDraftUi();
+      this.persistScene();
+      return;
+    }
+
+    const numericValue = Number.parseFloat(value);
+    if (!Number.isFinite(numericValue)) {
+      return;
+    }
+
+    const clampedLevel = clamp(numericValue, -MAX_FLOOR_ZONE_LEVEL, MAX_FLOOR_ZONE_LEVEL);
+    if (Math.abs(clampedLevel) < MIN_FLOOR_ZONE_LEVEL) {
+      return;
+    }
+
+    this.draftFloorZone.level = clampedLevel;
+    this.syncDraftUi();
+    this.persistScene();
+  }
+
   private handleSelectionNumberInput(
     key: "width" | "depth" | "height" | "x" | "z" | "rotation",
     value: string
@@ -1499,7 +1704,7 @@ export class InteriorStudio {
       }
 
       this.clampFurniture(selected.item);
-    } else {
+    } else if (selected.kind === "wall") {
       switch (key) {
         case "width":
           selected.item.group.scale.x = clamp(numericValue / selected.item.baseLength, 0.25, 18);
@@ -1521,6 +1726,29 @@ export class InteriorStudio {
           break;
       }
 
+      selected.item.group.position.y = 0;
+      this.clampObjectToRoom(selected.item.group);
+    } else {
+      const nextWidth = key === "width" ? clamp(numericValue, MIN_FLOOR_ZONE_SIZE, 18) : selected.item.width;
+      const nextDepth = key === "depth" ? clamp(numericValue, MIN_FLOOR_ZONE_SIZE, 18) : selected.item.depth;
+      const nextLevel =
+        key === "height"
+          ? Math.abs(numericValue) < MIN_FLOOR_ZONE_LEVEL
+            ? selected.item.level
+            : clamp(numericValue, -MAX_FLOOR_ZONE_LEVEL, MAX_FLOOR_ZONE_LEVEL)
+          : selected.item.level;
+
+      if (key === "x") {
+        selected.item.group.position.x = numericValue;
+      }
+      if (key === "z") {
+        selected.item.group.position.z = numericValue;
+      }
+      if (key === "rotation") {
+        selected.item.group.rotation.y = degreesToRadians(numericValue);
+      }
+
+      this.resizeFloorZone(selected.item, nextWidth, nextDepth, nextLevel);
       selected.item.group.position.y = 0;
       this.clampObjectToRoom(selected.item.group);
     }
@@ -1757,6 +1985,40 @@ export class InteriorStudio {
     return instance;
   }
 
+  private instantiateFloorZone(serialized: SerializedFloorZone, persist = true): FloorZoneInstance {
+    const id = serialized.id ?? crypto.randomUUID();
+    const width = clamp(serialized.size[0], MIN_FLOOR_ZONE_SIZE, 18);
+    const depth = clamp(serialized.size[1], MIN_FLOOR_ZONE_SIZE, 18);
+    const rawLevel = clamp(serialized.level, -MAX_FLOOR_ZONE_LEVEL, MAX_FLOOR_ZONE_LEVEL);
+    const level = Math.abs(rawLevel) < MIN_FLOOR_ZONE_LEVEL ? 0.15 : rawLevel;
+    const group = createFloorZoneGroup(width, depth, level, serialized.color);
+    group.position.set(serialized.center[0], 0, serialized.center[1]);
+    group.rotation.y = serialized.rotationY ?? 0;
+    group.userData.floorZoneId = id;
+
+    this.floorZoneGroup.add(group);
+
+    const instance: FloorZoneInstance = {
+      id,
+      group,
+      label: localizeLegacyLabel(serialized.label, `단차 ${this.floorZones.size + 1}`),
+      color: serialized.color,
+      width,
+      depth,
+      level
+    };
+
+    this.floorZones.set(id, instance);
+    this.clampObjectToRoom(instance.group);
+    this.updateMetrics();
+
+    if (persist) {
+      this.persistScene();
+    }
+
+    return instance;
+  }
+
   private serializeWall(item: WallInstance): SerializedWall {
     const size = this.getWallDimensions(item);
     const directionX = Math.cos(item.group.rotation.y);
@@ -1775,6 +2037,18 @@ export class InteriorStudio {
     };
   }
 
+  private serializeFloorZone(item: FloorZoneInstance): SerializedFloorZone {
+    return {
+      id: item.id,
+      center: [roundTo(item.group.position.x, SNAP_STEP), roundTo(item.group.position.z, SNAP_STEP)],
+      size: [Number(item.width.toFixed(3)), Number(item.depth.toFixed(3))],
+      level: Number(item.level.toFixed(3)),
+      color: item.color,
+      label: item.label,
+      rotationY: item.group.rotation.y
+    };
+  }
+
   private applyTemplate(templateId: string, announce = true): void {
     const template = DESIGN_TEMPLATES.find((entry) => entry.id === templateId);
     if (!template) {
@@ -1790,7 +2064,8 @@ export class InteriorStudio {
 
     this.rebuildRoom();
     this.clearFurniture(false);
-    this.clearWalls(false);
+    this.clearWalls(false, false);
+    this.clearFloorZones(false, false);
     template.objects.forEach((objectConfig) => {
       this.instantiateFurniture(objectConfig, false);
     });
@@ -1819,7 +2094,8 @@ export class InteriorStudio {
 
     this.rebuildRoom();
     this.clearFurniture(false);
-    this.clearWalls(false);
+    this.clearWalls(false, false);
+    this.clearFloorZones(false, false);
     this.finishWallDraft(false);
     this.clearSelection();
     this.updateMetrics();
@@ -1843,7 +2119,7 @@ export class InteriorStudio {
     }
   }
 
-  private clearWalls(announce = false): void {
+  private clearWalls(announce = false, persist = true): void {
     this.walls.forEach((item) => {
       this.wallGroup.remove(item.group);
       disposeObject(item.group);
@@ -1852,10 +2128,30 @@ export class InteriorStudio {
     this.finishWallDraft(false);
     this.clearSelection();
     this.updateMetrics();
-    this.persistScene();
+    if (persist) {
+      this.persistScene();
+    }
 
     if (announce) {
       this.toast("그려 둔 벽을 모두 지웠습니다.");
+    }
+  }
+
+  private clearFloorZones(announce = false, persist = true): void {
+    this.floorZones.forEach((item) => {
+      this.floorZoneGroup.remove(item.group);
+      disposeObject(item.group);
+    });
+    this.floorZones.clear();
+    this.finishWallDraft(false);
+    this.clearSelection();
+    this.updateMetrics();
+    if (persist) {
+      this.persistScene();
+    }
+
+    if (announce) {
+      this.toast("단차 구역을 모두 지웠습니다.");
     }
   }
 
@@ -1877,6 +2173,17 @@ export class InteriorStudio {
     }
 
     this.selected = { kind: "wall", id };
+    this.transformControls.attach(item.group);
+    this.updateSelectionState();
+  }
+
+  private selectFloorZone(id: string): void {
+    const item = this.floorZones.get(id);
+    if (!item) {
+      return;
+    }
+
+    this.selected = { kind: "floorZone", id };
     this.transformControls.attach(item.group);
     this.updateSelectionState();
   }
@@ -1903,9 +2210,18 @@ export class InteriorStudio {
     return this.walls.get(this.selected.id) ?? null;
   }
 
+  private getSelectedFloorZone(): FloorZoneInstance | null {
+    if (!this.selected || this.selected.kind !== "floorZone") {
+      return null;
+    }
+
+    return this.floorZones.get(this.selected.id) ?? null;
+  }
+
   private getSelectedEntity():
     | { kind: "furniture"; item: FurnitureInstance }
     | { kind: "wall"; item: WallInstance }
+    | { kind: "floorZone"; item: FloorZoneInstance }
     | null {
     const furniture = this.getSelectedFurniture();
     if (furniture) {
@@ -1915,6 +2231,11 @@ export class InteriorStudio {
     const wall = this.getSelectedWall();
     if (wall) {
       return { kind: "wall", item: wall };
+    }
+
+    const floorZone = this.getSelectedFloorZone();
+    if (floorZone) {
+      return { kind: "floorZone", item: floorZone };
     }
 
     return null;
@@ -1941,6 +2262,20 @@ export class InteriorStudio {
       const wallId = current.userData.wallId as string | undefined;
       if (wallId) {
         return this.walls.get(wallId) ?? null;
+      }
+      current = current.parent;
+    }
+
+    return null;
+  }
+
+  private findFloorZoneFromObject(object: THREE.Object3D): FloorZoneInstance | null {
+    let current: THREE.Object3D | null = object;
+
+    while (current) {
+      const floorZoneId = current.userData.floorZoneId as string | undefined;
+      if (floorZoneId) {
+        return this.floorZones.get(floorZoneId) ?? null;
       }
       current = current.parent;
     }
@@ -1996,6 +2331,18 @@ export class InteriorStudio {
     );
   }
 
+  private resizeFloorZone(item: FloorZoneInstance, width: number, depth: number, level: number): void {
+    item.width = clamp(width, MIN_FLOOR_ZONE_SIZE, 18);
+    item.depth = clamp(depth, MIN_FLOOR_ZONE_SIZE, 18);
+    item.level =
+      Math.abs(level) < MIN_FLOOR_ZONE_LEVEL
+        ? item.level >= 0
+          ? MIN_FLOOR_ZONE_LEVEL
+          : -MIN_FLOOR_ZONE_LEVEL
+        : clamp(level, -MAX_FLOOR_ZONE_LEVEL, MAX_FLOOR_ZONE_LEVEL);
+    updateFloorZoneGeometry(item.group, item.width, item.depth, item.level);
+  }
+
   private handleTransformChange(): void {
     const furniture = this.getSelectedFurniture();
     if (furniture) {
@@ -2012,6 +2359,31 @@ export class InteriorStudio {
       furniture.group.rotation.y = degreesToRadians(roundTo(radiansToDegrees(furniture.group.rotation.y), ROTATION_STEP));
 
       this.clampFurniture(furniture);
+      this.updateSelectionState();
+      this.persistScene();
+      return;
+    }
+
+    const floorZone = this.getSelectedFloorZone();
+    if (floorZone) {
+      if (this.toolMode === "scale") {
+        const nextWidth = clamp(roundTo(floorZone.width * floorZone.group.scale.x, 0.05), MIN_FLOOR_ZONE_SIZE, 18);
+        const nextDepth = clamp(roundTo(floorZone.depth * floorZone.group.scale.z, 0.05), MIN_FLOOR_ZONE_SIZE, 18);
+        const nextLevel =
+          floorZone.group.scale.y !== 1
+            ? Math.sign(floorZone.level || 1) *
+              clamp(roundTo(Math.abs(floorZone.level * floorZone.group.scale.y), 0.05), MIN_FLOOR_ZONE_LEVEL, MAX_FLOOR_ZONE_LEVEL)
+            : floorZone.level;
+        this.resizeFloorZone(floorZone, nextWidth, nextDepth, nextLevel);
+        floorZone.group.scale.set(1, 1, 1);
+      }
+
+      floorZone.group.position.x = roundTo(floorZone.group.position.x, SNAP_STEP);
+      floorZone.group.position.z = roundTo(floorZone.group.position.z, SNAP_STEP);
+      floorZone.group.position.y = 0;
+      floorZone.group.rotation.y = degreesToRadians(roundTo(radiansToDegrees(floorZone.group.rotation.y), ROTATION_STEP));
+
+      this.clampObjectToRoom(floorZone.group);
       this.updateSelectionState();
       this.persistScene();
       return;
@@ -2051,11 +2423,16 @@ export class InteriorStudio {
       disposeObject(selected.item.group);
       this.furniture.delete(selected.item.id);
       this.toast("선택한 가구를 삭제했습니다.");
-    } else {
+    } else if (selected.kind === "wall") {
       this.wallGroup.remove(selected.item.group);
       disposeObject(selected.item.group);
       this.walls.delete(selected.item.id);
       this.toast("선택한 벽을 삭제했습니다.");
+    } else {
+      this.floorZoneGroup.remove(selected.item.group);
+      disposeObject(selected.item.group);
+      this.floorZones.delete(selected.item.id);
+      this.toast("선택한 단차 구역을 삭제했습니다.");
     }
 
     this.clearSelection();
@@ -2085,17 +2462,31 @@ export class InteriorStudio {
       return;
     }
 
-    const serialized = this.serializeWall(selected.item);
-    const duplicate = this.instantiateWall(
+    if (selected.kind === "wall") {
+      const serialized = this.serializeWall(selected.item);
+      const duplicate = this.instantiateWall(
+        {
+          ...serialized,
+          start: [serialized.start[0] + 0.45, serialized.start[1] + 0.45],
+          end: [serialized.end[0] + 0.45, serialized.end[1] + 0.45],
+          label: `${selected.item.label} 복사본`
+        },
+        true
+      );
+      this.selectWall(duplicate.id);
+      this.toast("복제본을 만들었습니다.");
+      return;
+    }
+
+    const duplicate = this.instantiateFloorZone(
       {
-        ...serialized,
-        start: [serialized.start[0] + 0.45, serialized.start[1] + 0.45],
-        end: [serialized.end[0] + 0.45, serialized.end[1] + 0.45],
+        ...this.serializeFloorZone(selected.item),
+        center: [selected.item.group.position.x + 0.6, selected.item.group.position.z + 0.6],
         label: `${selected.item.label} 복사본`
       },
       true
     );
-    this.selectWall(duplicate.id);
+    this.selectFloorZone(duplicate.id);
     this.toast("복제본을 만들었습니다.");
   }
 
@@ -2144,6 +2535,10 @@ export class InteriorStudio {
           ? this.draftAnchor
             ? "벽 그리기 모드입니다. 다음 점을 클릭해 체인을 이어가세요."
             : "벽 그리기 모드입니다. 평면 보기에서 시작점을 클릭해 벽 그리기를 시작하세요."
+          : this.draftMode === "floor"
+            ? this.draftAnchor
+              ? "단차 구역 시작점이 고정되었습니다. 반대쪽 점을 클릭해 구역을 완성하세요."
+              : "단차 구역 모드입니다. 평면 보기에서 첫 점과 반대쪽 점을 차례로 클릭하세요."
           : "선택된 항목이 없습니다. 가구를 추가한 뒤 선택 모드에서 크기 핸들을 쓰거나 오른쪽에서 정확한 치수를 입력하세요.";
       return;
     }
@@ -2169,21 +2564,36 @@ export class InteriorStudio {
       return;
     }
 
-    const size = this.getWallDimensions(selected.item);
-    this.syncSelectionLabels("wall");
-    this.dom.selectedKind.textContent = "벽 구간";
-    this.dom.selectionBanner.textContent = `${selected.item.label} 선택됨. 도면에 맞게 길이, 두께, 각도를 조절하세요.`;
+    if (selected.kind === "wall") {
+      const size = this.getWallDimensions(selected.item);
+      this.syncSelectionLabels("wall");
+      this.dom.selectedKind.textContent = "벽 구간";
+      this.dom.selectionBanner.textContent = `${selected.item.label} 선택됨. 도면에 맞게 길이, 두께, 각도를 조절하세요.`;
+      this.dom.selectionInputs.label.value = selected.item.label;
+      this.dom.selectionInputs.width.value = size.x.toFixed(2);
+      this.dom.selectionInputs.depth.value = size.z.toFixed(2);
+      this.dom.selectionInputs.height.value = size.y.toFixed(2);
+      this.dom.selectionInputs.x.value = selected.item.group.position.x.toFixed(2);
+      this.dom.selectionInputs.z.value = selected.item.group.position.z.toFixed(2);
+      this.dom.selectionInputs.rotation.value = roundTo(radiansToDegrees(selected.item.group.rotation.y), ROTATION_STEP).toFixed(0);
+      this.dom.selectionInputs.color.value = selected.item.color;
+      return;
+    }
+
+    this.syncSelectionLabels("floor");
+    this.dom.selectedKind.textContent = "바닥 단차";
+    this.dom.selectionBanner.textContent = `${selected.item.label} 선택됨. 가로, 세로, 높낮이를 수치로 조절하고 위치를 맞추세요.`;
     this.dom.selectionInputs.label.value = selected.item.label;
-    this.dom.selectionInputs.width.value = size.x.toFixed(2);
-    this.dom.selectionInputs.depth.value = size.z.toFixed(2);
-    this.dom.selectionInputs.height.value = size.y.toFixed(2);
+    this.dom.selectionInputs.width.value = selected.item.width.toFixed(2);
+    this.dom.selectionInputs.depth.value = selected.item.depth.toFixed(2);
+    this.dom.selectionInputs.height.value = selected.item.level.toFixed(2);
     this.dom.selectionInputs.x.value = selected.item.group.position.x.toFixed(2);
     this.dom.selectionInputs.z.value = selected.item.group.position.z.toFixed(2);
     this.dom.selectionInputs.rotation.value = roundTo(radiansToDegrees(selected.item.group.rotation.y), ROTATION_STEP).toFixed(0);
     this.dom.selectionInputs.color.value = selected.item.color;
   }
 
-  private syncSelectionLabels(kind: "furniture" | "wall"): void {
+  private syncSelectionLabels(kind: "furniture" | "wall" | "floor"): void {
     if (kind === "wall") {
       this.dom.selectionLabels.width.textContent = "길이";
       this.dom.selectionLabels.depth.textContent = "두께";
@@ -2192,6 +2602,17 @@ export class InteriorStudio {
       this.dom.selectionLabels.z.textContent = "위치 Z";
       this.dom.selectionLabels.rotation.textContent = "회전";
       this.dom.selectionLabels.color.textContent = "벽 색상";
+      return;
+    }
+
+    if (kind === "floor") {
+      this.dom.selectionLabels.width.textContent = "가로";
+      this.dom.selectionLabels.depth.textContent = "세로";
+      this.dom.selectionLabels.height.textContent = "높낮이";
+      this.dom.selectionLabels.x.textContent = "위치 X";
+      this.dom.selectionLabels.z.textContent = "위치 Z";
+      this.dom.selectionLabels.rotation.textContent = "회전";
+      this.dom.selectionLabels.color.textContent = "단차 색상";
       return;
     }
 
@@ -2224,6 +2645,8 @@ export class InteriorStudio {
     this.dom.draftInputs.thickness.value = this.draftWall.thickness.toFixed(2);
     this.dom.draftInputs.height.value = this.draftWall.height.toFixed(2);
     this.dom.draftInputs.color.value = this.draftWall.color;
+    this.dom.floorZoneInputs.level.value = this.draftFloorZone.level.toFixed(2);
+    this.dom.floorZoneInputs.color.value = this.draftFloorZone.color;
 
     const draftButtons = this.root.querySelectorAll<HTMLElement>("[data-draft]");
     draftButtons.forEach((button) => {
@@ -2236,10 +2659,17 @@ export class InteriorStudio {
           ? "벽 체인이 활성화되었습니다. 포인터를 움직이고 다음 점을 클릭한 뒤 Esc로 마무리하세요."
           : "벽 그리기 모드입니다. 평면 보기에서 시작점을 클릭한 뒤 다시 클릭해 직선 벽을 만드세요."
         : "평면 보기에서 벽 그리기를 켠 뒤 시작점과 끝점을 차례로 클릭하세요. 다음 클릭마다 벽이 이어집니다.";
+
+    this.dom.floorZoneNote.textContent =
+      this.draftMode === "floor"
+        ? this.draftAnchor
+          ? "첫 점이 고정되었습니다. 반대쪽 점을 클릭하면 직사각형 단차 구역이 만들어집니다."
+          : "단차 구역 모드입니다. 평면 보기에서 두 점을 찍어 구역을 만들고, 높낮이는 양수면 올림 음수면 내림입니다."
+        : "평면 보기에서 단차 구역을 켠 뒤 두 점을 클릭해 직사각형 구역을 만드세요. 높낮이는 양수면 올림, 음수면 내림입니다.";
   }
 
   private switchView(view: ViewMode): void {
-    if (view !== "top" && this.draftMode === "wall") {
+    if (view !== "top" && this.draftMode !== "select") {
       this.finishWallDraft(false);
       this.draftMode = "select";
       this.syncDraftUi();
@@ -2342,12 +2772,12 @@ export class InteriorStudio {
   private setDraftMode(mode: DraftMode): void {
     this.draftMode = mode;
 
-    if (mode === "wall") {
+    if (mode === "wall" || mode === "floor") {
       if (this.viewMode !== "top") {
         this.switchView("top");
       }
       this.clearSelection();
-      this.toast("벽 그리기 모드를 켰습니다. 평면 보기에서 점을 클릭하세요.");
+      this.toast(mode === "wall" ? "벽 그리기 모드를 켰습니다. 평면 보기에서 점을 클릭하세요." : "단차 구역 모드를 켰습니다. 평면 보기에서 두 점을 클릭하세요.");
     } else {
       this.finishWallDraft(false);
     }
@@ -2359,22 +2789,23 @@ export class InteriorStudio {
   private finishWallDraft(showToast = true): void {
     this.draftAnchor = null;
     this.draftLine.visible = false;
+    this.draftAreaLine.visible = false;
     this.draftMarker.visible = false;
     this.syncDraftUi();
     this.updateSelectionState();
 
-    if (showToast && this.draftMode === "wall") {
-      this.toast("벽 체인을 종료했습니다.");
+    if (showToast && this.draftMode !== "select") {
+      this.toast(this.draftMode === "floor" ? "단차 구역 입력을 종료했습니다." : "벽 체인을 종료했습니다.");
     }
   }
 
-  private handleDraftClick(point: THREE.Vector3): void {
-    const snapped = this.normalizeDraftPoint(point);
+  private handleWallDraftClick(point: THREE.Vector3): void {
+    const snapped = this.normalizeWallDraftPoint(point);
     if (!this.draftAnchor) {
       this.draftAnchor = snapped.clone();
       this.draftMarker.position.set(snapped.x, 0.06, snapped.z);
       this.draftMarker.visible = true;
-      this.updateDraftPreview(snapped);
+      this.updateWallDraftPreview(snapped);
       this.syncDraftUi();
       this.updateSelectionState();
       this.toast("벽 시작점을 고정했습니다.");
@@ -2400,14 +2831,49 @@ export class InteriorStudio {
 
     this.draftAnchor = snapped.clone();
     this.draftMarker.position.set(snapped.x, 0.06, snapped.z);
-    this.updateDraftPreview(snapped);
+    this.updateWallDraftPreview(snapped);
     this.updateMetrics();
     this.syncDraftUi();
     this.updateSelectionState();
     this.toast("벽 구간을 만들었습니다.");
   }
 
-  private normalizeDraftPoint(point: THREE.Vector3): THREE.Vector3 {
+  private handleFloorZoneDraftClick(point: THREE.Vector3): void {
+    const snapped = this.normalizeFloorZoneDraftPoint(point);
+    if (!this.draftAnchor) {
+      this.draftAnchor = snapped.clone();
+      this.draftMarker.position.set(snapped.x, 0.06, snapped.z);
+      this.draftMarker.visible = true;
+      this.updateFloorZoneDraftPreview(snapped);
+      this.syncDraftUi();
+      this.updateSelectionState();
+      this.toast("단차 구역 첫 점을 고정했습니다.");
+      return;
+    }
+
+    const width = Math.abs(snapped.x - this.draftAnchor.x);
+    const depth = Math.abs(snapped.z - this.draftAnchor.z);
+    if (width < MIN_FLOOR_ZONE_SIZE || depth < MIN_FLOOR_ZONE_SIZE) {
+      this.toast("단차 구역 크기가 너무 작습니다.");
+      return;
+    }
+
+    const zone = this.instantiateFloorZone(
+      {
+        center: [(this.draftAnchor.x + snapped.x) * 0.5, (this.draftAnchor.z + snapped.z) * 0.5],
+        size: [width, depth],
+        level: this.draftFloorZone.level,
+        color: this.draftFloorZone.color,
+        label: `단차 ${this.floorZones.size + 1}`
+      },
+      true
+    );
+    this.selectFloorZone(zone.id);
+    this.finishWallDraft(false);
+    this.toast("단차 구역을 만들었습니다.");
+  }
+
+  private normalizeWallDraftPoint(point: THREE.Vector3): THREE.Vector3 {
     let nextX = clamp(point.x, -this.room.width * 0.5, this.room.width * 0.5);
     let nextZ = clamp(point.z, -this.room.depth * 0.5, this.room.depth * 0.5);
 
@@ -2424,7 +2890,13 @@ export class InteriorStudio {
     return new THREE.Vector3(roundTo(nextX, SNAP_STEP), 0, roundTo(nextZ, SNAP_STEP));
   }
 
-  private updateDraftPreview(point: THREE.Vector3): void {
+  private normalizeFloorZoneDraftPoint(point: THREE.Vector3): THREE.Vector3 {
+    const nextX = clamp(point.x, -this.room.width * 0.5, this.room.width * 0.5);
+    const nextZ = clamp(point.z, -this.room.depth * 0.5, this.room.depth * 0.5);
+    return new THREE.Vector3(roundTo(nextX, SNAP_STEP), 0, roundTo(nextZ, SNAP_STEP));
+  }
+
+  private updateWallDraftPreview(point: THREE.Vector3): void {
     if (!this.draftAnchor) {
       this.draftLine.visible = false;
       return;
@@ -2436,6 +2908,29 @@ export class InteriorStudio {
     this.draftLine.geometry = new THREE.BufferGeometry().setFromPoints([start, end]);
     this.draftLine.computeLineDistances();
     this.draftLine.visible = true;
+  }
+
+  private updateFloorZoneDraftPreview(point: THREE.Vector3): void {
+    if (!this.draftAnchor) {
+      this.draftAreaLine.visible = false;
+      return;
+    }
+
+    const minX = Math.min(this.draftAnchor.x, point.x);
+    const maxX = Math.max(this.draftAnchor.x, point.x);
+    const minZ = Math.min(this.draftAnchor.z, point.z);
+    const maxZ = Math.max(this.draftAnchor.z, point.z);
+    const points = [
+      new THREE.Vector3(minX, 0.03, minZ),
+      new THREE.Vector3(maxX, 0.03, minZ),
+      new THREE.Vector3(maxX, 0.03, maxZ),
+      new THREE.Vector3(minX, 0.03, maxZ),
+      new THREE.Vector3(minX, 0.03, minZ)
+    ];
+    this.draftAreaLine.geometry.dispose();
+    this.draftAreaLine.geometry = new THREE.BufferGeometry().setFromPoints(points);
+    this.draftAreaLine.computeLineDistances();
+    this.draftAreaLine.visible = true;
   }
 
   private getActiveControls(): OrbitControls {
@@ -2487,5 +2982,6 @@ export class InteriorStudio {
     this.renderer.dispose();
     this.floorTexture?.dispose();
     this.draftLine.geometry.dispose();
+    this.draftAreaLine.geometry.dispose();
   }
 }

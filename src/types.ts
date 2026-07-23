@@ -47,11 +47,28 @@ export interface DraftWallSettings {
   color: string;
 }
 
+export interface DraftFloorZoneSettings {
+  level: number;
+  color: string;
+}
+
+export interface SerializedFloorZone {
+  id?: string;
+  center: [number, number];
+  size: [number, number];
+  level: number;
+  color: string;
+  label: string;
+  rotationY?: number;
+}
+
 export interface SceneSnapshot {
   room: RoomSettings;
   objects: SerializedObject[];
   walls: SerializedWall[];
   draftWall?: DraftWallSettings;
+  floorZones?: SerializedFloorZone[];
+  draftFloorZone?: DraftFloorZoneSettings;
 }
 
 export interface TemplateConfig {
