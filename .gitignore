@@ -1,4 +1,5 @@
 node_modules
+.pnpm-store
 dist
 work
 .DS_Store
