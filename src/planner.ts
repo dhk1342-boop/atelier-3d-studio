@@ -20,6 +20,7 @@ import type {
   DraftFloorZoneSettings,
   DraftWallSettings,
   FurniturePreset,
+  RoomSettings,
   SceneSnapshot,
   SerializedFloorZone,
   SerializedObject,
@@ -29,6 +30,7 @@ import type {
 } from "./types";
 
 const STORAGE_KEY = "atelier-3d-scene-v2";
+const LEGACY_STORAGE_KEY = "atelier-3d-scene-v1";
 const SNAP_STEP = 0.25;
 const KEYBOARD_NUDGE_STEP = 0.01;
 const ROTATION_STEP = 15;
@@ -66,6 +68,10 @@ const LEGACY_LABEL_MAP: Record<string, string> = {
 };
 
 type DraftMode = "select" | "wall" | "floor";
+type LegacySceneSnapshot = {
+  room?: Partial<RoomSettings>;
+  objects?: SerializedObject[];
+};
 
 interface FurnitureInstance {
   id: string;
@@ -103,6 +109,7 @@ type SelectionState =
 
 interface StudioDom {
   canvasHost: HTMLDivElement;
+  sceneImportInput: HTMLInputElement;
   toastStack: HTMLDivElement;
   selectionBanner: HTMLDivElement;
   draftNote: HTMLDivElement;
@@ -211,6 +218,10 @@ function localizeLegacyLabel(label: string | undefined, fallback: string): strin
   }
 
   return label;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function groupByCategory(presets: FurniturePreset[]): Map<string, FurniturePreset[]> {
@@ -488,7 +499,6 @@ export class InteriorStudio {
     this.perspectiveControls.minDistance = 3.2;
     this.perspectiveControls.maxDistance = 28;
     this.perspectiveControls.maxPolarAngle = Math.PI / 2.03;
-    this.syncModifierNavigation(false);
 
     this.orthoControls = new OrbitControls(this.orthoCamera, this.renderer.domElement);
     this.orthoControls.enableDamping = true;
@@ -498,6 +508,7 @@ export class InteriorStudio {
     this.orthoControls.mouseButtons.RIGHT = THREE.MOUSE.PAN;
     this.orthoControls.enablePan = true;
     this.orthoControls.enableZoom = true;
+    this.syncModifierNavigation(false);
 
     this.transformControls = new TransformControls(this.activeCamera, this.renderer.domElement);
     this.transformControls.setTranslationSnap(SNAP_STEP);
@@ -675,10 +686,13 @@ export class InteriorStudio {
               <button type="button" class="toolbar-pill toolbar-pill-strong" data-action="save">로컬 저장</button>
               <button type="button" class="toolbar-pill" data-action="cloud-save">클라우드 저장</button>
               <button type="button" class="toolbar-pill" data-action="share-link">공유 링크 복사</button>
+              <button type="button" class="toolbar-pill" data-action="import">장면 불러오기</button>
               <button type="button" class="toolbar-pill" data-action="export">JSON 내보내기</button>
               <button type="button" class="toolbar-pill" data-action="reset">초기화</button>
             </div>
           </header>
+
+          <input type="file" accept=".json,application/json" data-scene-import hidden />
 
           <section class="viewport-panel">
             <div class="hud-strip">
@@ -908,7 +922,7 @@ export class InteriorStudio {
             </ul>
             <div class="save-note">
               <strong>저장</strong>
-              <span><code>로컬 저장</code>은 현재 장면을 이 브라우저에 저장합니다. <code>JSON 내보내기</code>는 백업 파일을 내려받습니다.</span>
+              <span><code>로컬 저장</code>은 현재 장면을 이 브라우저에 저장합니다. <code>장면 불러오기</code>는 백업 JSON을 다시 열고, <code>JSON 내보내기</code>는 백업 파일을 내려받습니다.</span>
             </div>
           </section>
         </aside>
@@ -929,6 +943,7 @@ export class InteriorStudio {
 
     return {
       canvasHost: query<HTMLDivElement>(".canvas-host"),
+      sceneImportInput: query<HTMLInputElement>("[data-scene-import]"),
       toastStack: query<HTMLDivElement>(".toast-stack"),
       selectionBanner: query<HTMLDivElement>("[data-selection-banner]"),
       draftNote: query<HTMLDivElement>("[data-draft-note]"),
@@ -1055,6 +1070,11 @@ export class InteriorStudio {
 
     this.dom.cloud.project.addEventListener("change", () => {
       this.handleCloudProjectInput(this.dom.cloud.project.value);
+    });
+
+    this.dom.sceneImportInput.addEventListener("change", () => {
+      const [file] = [...(this.dom.sceneImportInput.files ?? [])];
+      void this.importSceneFromFile(file ?? null);
     });
 
     this.dom.selectionInputs.label.addEventListener("input", () => {
@@ -1341,6 +1361,9 @@ export class InteriorStudio {
       case "share-link":
         void this.copyShareLink();
         break;
+      case "import":
+        this.importScene();
+        break;
       case "cloud-load":
         void this.loadSceneFromCloudProject();
         break;
@@ -1458,6 +1481,61 @@ export class InteriorStudio {
       draftWall: { ...this.draftWall },
       draftFloorZone: { ...this.draftFloorZone }
     };
+  }
+
+  private isSceneSnapshot(payload: unknown): payload is SceneSnapshot {
+    return (
+      isRecord(payload) &&
+      isRecord(payload.room) &&
+      Array.isArray(payload.objects) &&
+      Array.isArray(payload.walls)
+    );
+  }
+
+  private isLegacySceneSnapshot(payload: unknown): payload is LegacySceneSnapshot {
+    return isRecord(payload) && isRecord(payload.room) && Array.isArray(payload.objects) && !Array.isArray(payload.walls);
+  }
+
+  private isSceneSnapshotEmpty(snapshot: SceneSnapshot): boolean {
+    return snapshot.objects.length === 0 && snapshot.walls.length === 0 && (snapshot.floorZones?.length ?? 0) === 0;
+  }
+
+  private hasLegacySceneContent(snapshot: LegacySceneSnapshot): boolean {
+    return (snapshot.objects?.length ?? 0) > 0;
+  }
+
+  private applyLegacySnapshot(snapshot: LegacySceneSnapshot): void {
+    this.room = { ...DEFAULT_ROOM, ...snapshot.room };
+    this.draftWall = {
+      thickness: 0.14,
+      height: 2.8,
+      color: snapshot.room?.wallColor ?? DEFAULT_ROOM.wallColor
+    };
+    this.draftFloorZone = {
+      level: 0.15,
+      color: "#c5ad90"
+    };
+
+    this.rebuildRoom();
+    this.clearFurniture(false);
+    this.clearWalls(false, false);
+    this.clearFloorZones(false, false);
+
+    (snapshot.objects ?? []).forEach((serialized) => {
+      const preset = FURNITURE_PRESETS.find((entry) => entry.id === serialized.presetId);
+      this.instantiateFurniture(
+        {
+          ...serialized,
+          color: serialized.color || preset?.color || "#c8b39d",
+          label: localizeLegacyLabel(serialized.label, preset?.label ?? "항목")
+        },
+        false
+      );
+    });
+
+    this.updateMetrics();
+    this.clearSelection();
+    this.syncDraftUi();
   }
 
   private applySnapshot(snapshot: SceneSnapshot): void {
@@ -1896,26 +1974,93 @@ export class InteriorStudio {
   }
 
   private loadScene(): void {
-    try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (!raw) {
-        this.applyEmptyScene(false);
+    const snapshot = this.parseStoredScene(window.localStorage.getItem(STORAGE_KEY));
+    const legacySnapshot = this.parseStoredScene(window.localStorage.getItem(LEGACY_STORAGE_KEY));
+
+    if (snapshot && this.isSceneSnapshot(snapshot)) {
+      if (
+        this.isSceneSnapshotEmpty(snapshot) &&
+        legacySnapshot &&
+        this.isLegacySceneSnapshot(legacySnapshot) &&
+        this.hasLegacySceneContent(legacySnapshot)
+      ) {
+        this.applyLegacySnapshot(legacySnapshot);
+        this.storeSceneLocally();
+        this.toast("이전 버전 저장본을 복구했습니다.");
         return;
       }
 
-      const snapshot = JSON.parse(raw) as SceneSnapshot;
       this.applySnapshot(snapshot);
+      return;
+    }
+
+    if (legacySnapshot && this.isLegacySceneSnapshot(legacySnapshot) && this.hasLegacySceneContent(legacySnapshot)) {
+      this.applyLegacySnapshot(legacySnapshot);
+      this.storeSceneLocally();
+      this.toast("이전 버전 저장본을 복구했습니다.");
+      return;
+    }
+
+    try {
+      this.applyEmptyScene(false);
     } catch {
       this.applyEmptyScene(false);
     }
   }
 
-  private persistScene(showToast = false): void {
+  private parseStoredScene(raw: string | null): unknown | null {
+    if (!raw) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(raw) as unknown;
+    } catch {
+      return null;
+    }
+  }
+
+  private storeSceneLocally(): SceneSnapshot {
     const snapshot = this.buildSnapshot();
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+    return snapshot;
+  }
+
+  private persistScene(showToast = false): void {
+    const snapshot = this.storeSceneLocally();
     this.queueCloudSave(snapshot);
     if (showToast) {
       this.toast("장면을 로컬에 저장했습니다.");
+    }
+  }
+
+  private importScene(): void {
+    this.dom.sceneImportInput.value = "";
+    this.dom.sceneImportInput.click();
+  }
+
+  private async importSceneFromFile(file: File | null): Promise<void> {
+    if (!file) {
+      return;
+    }
+
+    try {
+      const payload = JSON.parse(await file.text()) as unknown;
+      const restored =
+        (this.isSceneSnapshot(payload) && (this.applySnapshot(payload), true)) ||
+        (this.isLegacySceneSnapshot(payload) && (this.applyLegacySnapshot(payload), true));
+
+      if (!restored) {
+        this.toast("지원하지 않는 장면 파일입니다.");
+        return;
+      }
+
+      this.persistScene();
+      this.toast("장면 파일을 불러왔습니다.");
+    } catch {
+      this.toast("장면 파일을 읽지 못했습니다.");
+    } finally {
+      this.dom.sceneImportInput.value = "";
     }
   }
 
@@ -2980,6 +3125,11 @@ export class InteriorStudio {
 
   private syncModifierNavigation(isCtrlPressed: boolean): void {
     this.perspectiveControls.mouseButtons.LEFT = isCtrlPressed ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
+
+    if (!this.orthoControls) {
+      return;
+    }
+
     this.orthoControls.mouseButtons.LEFT = THREE.MOUSE.PAN;
     this.orthoControls.mouseButtons.RIGHT = THREE.MOUSE.PAN;
   }
