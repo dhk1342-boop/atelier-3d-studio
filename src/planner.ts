@@ -1121,7 +1121,7 @@ export class InteriorStudio {
         this.exportScene();
         break;
       case "reset":
-        this.applyTemplate(DESIGN_TEMPLATES[0].id);
+        this.applyEmptyScene();
         break;
       case "delete":
         this.deleteSelected();
@@ -1612,14 +1612,14 @@ export class InteriorStudio {
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
       if (!raw) {
-        this.applyTemplate(DESIGN_TEMPLATES[0].id, false);
+        this.applyEmptyScene(false);
         return;
       }
 
       const snapshot = JSON.parse(raw) as SceneSnapshot;
       this.applySnapshot(snapshot);
     } catch {
-      this.applyTemplate(DESIGN_TEMPLATES[0].id, false);
+      this.applyEmptyScene(false);
     }
   }
 
@@ -1788,6 +1788,28 @@ export class InteriorStudio {
 
     if (announce) {
       this.toast(`${template.label} 레이아웃을 불러왔습니다.`);
+    }
+  }
+
+  private applyEmptyScene(announce = true): void {
+    this.room = { ...DEFAULT_ROOM };
+    this.draftWall = {
+      thickness: 0.14,
+      height: 2.8,
+      color: DEFAULT_ROOM.wallColor
+    };
+
+    this.rebuildRoom();
+    this.clearFurniture(false);
+    this.clearWalls(false);
+    this.finishWallDraft(false);
+    this.clearSelection();
+    this.updateMetrics();
+    this.syncDraftUi();
+    this.persistScene();
+
+    if (announce) {
+      this.toast("빈 장면으로 초기화했습니다.");
     }
   }
 
