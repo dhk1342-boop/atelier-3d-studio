@@ -487,6 +487,7 @@ export class InteriorStudio {
     this.perspectiveControls.minDistance = 3.2;
     this.perspectiveControls.maxDistance = 28;
     this.perspectiveControls.maxPolarAngle = Math.PI / 2.03;
+    this.syncModifierNavigation(false);
 
     this.orthoControls = new OrbitControls(this.orthoCamera, this.renderer.domElement);
     this.orthoControls.enableDamping = true;
@@ -1105,6 +1106,8 @@ export class InteriorStudio {
     });
 
     window.addEventListener("keydown", (event) => {
+      this.syncModifierNavigation(event.ctrlKey);
+
       const target = event.target as HTMLElement | null;
       if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) {
         return;
@@ -1169,6 +1172,22 @@ export class InteriorStudio {
         this.switchView("side");
       }
     });
+
+    window.addEventListener("keyup", (event) => {
+      this.syncModifierNavigation(event.ctrlKey);
+    });
+
+    window.addEventListener("blur", () => {
+      this.syncModifierNavigation(false);
+    });
+
+    this.renderer.domElement.addEventListener(
+      "pointerdown",
+      (event) => {
+        this.syncModifierNavigation(event.ctrlKey);
+      },
+      { capture: true }
+    );
 
     this.renderer.domElement.addEventListener("pointerdown", (event) => {
       this.handleViewportPointerDown(event);
@@ -2935,6 +2954,10 @@ export class InteriorStudio {
 
   private getActiveControls(): OrbitControls {
     return this.viewMode === "3d" ? this.perspectiveControls : this.orthoControls;
+  }
+
+  private syncModifierNavigation(isCtrlPressed: boolean): void {
+    this.perspectiveControls.mouseButtons.LEFT = isCtrlPressed ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
   }
 
   private resize(): void {
