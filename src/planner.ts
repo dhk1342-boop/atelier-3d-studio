@@ -699,7 +699,7 @@ export class InteriorStudio {
               </div>
             </div>
 
-            <div class="selection-banner" data-selection-banner>선택된 항목이 없습니다. 가구를 추가한 뒤 선택 모드에서 크기 핸들을 쓰거나 오른쪽에서 정확한 치수를 입력하세요.</div>
+            <div class="selection-banner" data-selection-banner>선택된 항목이 없습니다. 가구를 추가한 뒤 선택 모드에서 크기 핸들을 쓰거나 아래 작업 패널에서 정확한 치수를 입력하세요.</div>
             <div class="canvas-host"></div>
 
             <div class="viewport-note">
@@ -707,9 +707,125 @@ export class InteriorStudio {
               <span>Delete 삭제, 1-4 시점, G/R/S 도구, W 벽 그리기, Esc 종료</span>
             </div>
           </section>
+
+          <section class="workspace-bottom">
+            <section class="panel panel-dock panel-wall">
+              <div class="panel-head">
+                <h2>벽 그리기</h2>
+                <span class="panel-pill">직교 체인</span>
+              </div>
+
+              <div class="draft-actions">
+                <button type="button" class="toolbar-pill" data-draft="select">선택</button>
+                <button type="button" class="toolbar-pill" data-draft="wall">벽 그리기</button>
+                <button type="button" class="toolbar-pill" data-action="clear-walls">벽 모두 삭제</button>
+              </div>
+
+              <div class="form-grid compact-grid">
+                <label class="field">
+                  <span>두께</span>
+                  <input type="number" min="0.08" max="0.6" step="0.01" value="0.14" data-draft-input="thickness" />
+                </label>
+                <label class="field">
+                  <span>높이</span>
+                  <input type="number" min="2" max="4" step="0.05" value="2.8" data-draft-input="height" />
+                </label>
+                <label class="field field-full">
+                  <span>벽 색상</span>
+                  <input type="color" value="${DEFAULT_ROOM.wallColor}" data-draft-input="color" />
+                </label>
+              </div>
+
+              <div class="draft-note" data-draft-note>평면 보기에서 벽 그리기를 켠 뒤 시작점과 끝점을 차례로 클릭하세요. 다음 클릭마다 벽이 이어집니다.</div>
+            </section>
+
+            <section class="panel panel-dock panel-floor">
+              <div class="panel-head">
+                <h2>바닥 단차</h2>
+                <span class="panel-pill">사각 구역</span>
+              </div>
+
+              <div class="draft-actions">
+                <button type="button" class="toolbar-pill" data-draft="select">선택</button>
+                <button type="button" class="toolbar-pill" data-draft="floor">단차 구역</button>
+                <button type="button" class="toolbar-pill" data-action="clear-floor-zones">단차 모두 삭제</button>
+              </div>
+
+              <div class="form-grid compact-grid">
+                <label class="field">
+                  <span>높낮이 (m)</span>
+                  <input type="number" min="-1.5" max="1.5" step="0.05" value="0.15" data-floor-zone-input="level" />
+                </label>
+                <label class="field field-full">
+                  <span>단차 색상</span>
+                  <input type="color" value="#c5ad90" data-floor-zone-input="color" />
+                </label>
+              </div>
+
+              <div class="draft-note" data-floor-zone-note>평면 보기에서 단차 구역을 켠 뒤 첫 점과 반대쪽 점을 차례로 클릭하세요. 양수는 올림, 음수는 내림입니다.</div>
+            </section>
+
+            <section class="panel panel-dock panel-selection">
+              <div class="panel-head">
+                <div class="panel-heading">
+                  <h2>선택 항목</h2>
+                  <span class="panel-pill" data-selected-kind>선택 없음</span>
+                </div>
+                <button type="button" class="text-button" data-action="duplicate">복제</button>
+              </div>
+
+              <div class="empty-state" data-selected-empty>가구나 그린 벽을 선택하면 형태, 위치, 마감을 수정할 수 있습니다.</div>
+              <div class="selection-helper">
+                <strong>가구 크기 조절</strong>
+                <span>가구를 선택한 뒤 <code>크기</code> 또는 <code>S</code>를 눌러 핸들을 드래그하거나 아래 작업 패널에서 정확한 치수를 입력하세요.</span>
+              </div>
+
+              <div class="selected-fields" data-selected-fields hidden>
+                <div class="form-grid">
+                  <label class="field field-full">
+                    <span>이름</span>
+                    <input type="text" data-selection-input="label" placeholder="항목 이름" />
+                  </label>
+                  <label class="field">
+                    <span data-selection-label="width">가로</span>
+                    <input type="number" min="0.3" max="20" step="0.05" data-selection-input="width" />
+                  </label>
+                  <label class="field">
+                    <span data-selection-label="depth">세로</span>
+                    <input type="number" min="0.08" max="20" step="0.05" data-selection-input="depth" />
+                  </label>
+                  <label class="field">
+                    <span data-selection-label="height">높이</span>
+                    <input type="number" min="-1.5" max="6" step="0.05" data-selection-input="height" />
+                  </label>
+                  <label class="field">
+                    <span data-selection-label="x">위치 X</span>
+                    <input type="number" min="-20" max="20" step="0.05" data-selection-input="x" />
+                  </label>
+                  <label class="field">
+                    <span data-selection-label="z">위치 Z</span>
+                    <input type="number" min="-20" max="20" step="0.05" data-selection-input="z" />
+                  </label>
+                  <label class="field">
+                    <span data-selection-label="rotation">회전</span>
+                    <input type="number" min="-180" max="180" step="15" data-selection-input="rotation" />
+                  </label>
+                  <label class="field">
+                    <span data-selection-label="color">마감</span>
+                    <input type="color" data-selection-input="color" />
+                  </label>
+                </div>
+
+                <div class="selection-actions">
+                  <button type="button" class="toolbar-pill toolbar-pill-strong" data-action="focus">초점 맞추기</button>
+                  <button type="button" class="toolbar-pill" data-action="delete">삭제</button>
+                </div>
+              </div>
+            </section>
+          </section>
         </main>
 
-        <aside class="sidebar sidebar-right">
+        <aside class="sidebar sidebar-right sidebar-utility">
           <section class="panel">
             <div class="panel-head">
               <h2>공간 설정</h2>
@@ -747,150 +863,29 @@ export class InteriorStudio {
             </div>
           </section>
 
-          <section class="panel">
+          <section class="panel panel-compact panel-cloud">
             <div class="panel-head">
-              <h2>공유 / 클라우드</h2>
+              <h2>클라우드</h2>
               <span class="panel-pill" data-cloud-status-badge>로컬 전용</span>
             </div>
 
-            <div class="form-grid">
-              <label class="field field-full">
-                <span>프로젝트 코드</span>
-                <input
-                  type="text"
-                  value="${this.cloudProjectId}"
-                  data-cloud-input="project"
-                  placeholder="예: atelier-home-01"
-                />
-              </label>
-            </div>
+            <label class="field field-full">
+              <span>프로젝트 코드</span>
+              <input
+                type="text"
+                value="${this.cloudProjectId}"
+                data-cloud-input="project"
+                placeholder="예: atelier-home-01"
+              />
+            </label>
 
-            <div class="draft-actions">
+            <div class="draft-actions cloud-actions">
               <button type="button" class="toolbar-pill" data-action="cloud-load">클라우드 불러오기</button>
               <button type="button" class="toolbar-pill" data-action="toggle-cloud-autosave">${this.cloudAutosaveEnabled ? "자동저장 끄기" : "자동저장 켜기"}</button>
             </div>
 
-            <div class="cloud-note" data-cloud-status-text>
+            <div class="cloud-note cloud-note-compact" data-cloud-status-text>
               Supabase 연결 전에는 현재 장면을 담은 웹 링크를 복사합니다. 연결 후에는 프로젝트 코드 기준으로 여러 기기에서 같은 장면을 이어서 편집할 수 있습니다.
-            </div>
-
-            <div class="save-note">
-              <strong>공유 방식</strong>
-              <span><code>공유 링크 복사</code>는 현재 장면 링크를 만듭니다. <code>클라우드 저장</code>은 Supabase 연결 후 프로젝트 코드를 기준으로 저장합니다.</span>
-            </div>
-          </section>
-
-          <section class="panel">
-            <div class="panel-head">
-              <h2>벽 그리기</h2>
-              <span class="panel-pill">직교 체인</span>
-            </div>
-
-            <div class="draft-actions">
-              <button type="button" class="toolbar-pill" data-draft="select">선택</button>
-              <button type="button" class="toolbar-pill" data-draft="wall">벽 그리기</button>
-              <button type="button" class="toolbar-pill" data-action="clear-walls">벽 모두 삭제</button>
-            </div>
-
-            <div class="form-grid compact-grid">
-              <label class="field">
-                <span>두께</span>
-                <input type="number" min="0.08" max="0.6" step="0.01" value="0.14" data-draft-input="thickness" />
-              </label>
-              <label class="field">
-                <span>높이</span>
-                <input type="number" min="2" max="4" step="0.05" value="2.8" data-draft-input="height" />
-              </label>
-              <label class="field field-full">
-                <span>벽 색상</span>
-                <input type="color" value="${DEFAULT_ROOM.wallColor}" data-draft-input="color" />
-              </label>
-            </div>
-
-            <div class="draft-note" data-draft-note>평면 보기에서 벽 그리기를 켠 뒤 시작점과 끝점을 차례로 클릭하세요. 다음 클릭마다 벽이 이어집니다.</div>
-          </section>
-
-          <section class="panel">
-            <div class="panel-head">
-              <h2>바닥 단차</h2>
-              <span class="panel-pill">사각 구역</span>
-            </div>
-
-            <div class="draft-actions">
-              <button type="button" class="toolbar-pill" data-draft="select">선택</button>
-              <button type="button" class="toolbar-pill" data-draft="floor">단차 구역</button>
-              <button type="button" class="toolbar-pill" data-action="clear-floor-zones">단차 모두 삭제</button>
-            </div>
-
-            <div class="form-grid compact-grid">
-              <label class="field">
-                <span>높낮이 (m)</span>
-                <input type="number" min="-1.5" max="1.5" step="0.05" value="0.15" data-floor-zone-input="level" />
-              </label>
-              <label class="field field-full">
-                <span>단차 색상</span>
-                <input type="color" value="#c5ad90" data-floor-zone-input="color" />
-              </label>
-            </div>
-
-            <div class="draft-note" data-floor-zone-note>평면 보기에서 단차 구역을 켠 뒤 첫 점과 반대쪽 점을 차례로 클릭하세요. 양수는 올림, 음수는 내림입니다.</div>
-          </section>
-
-          <section class="panel">
-            <div class="panel-head">
-              <div class="panel-heading">
-                <h2>선택 항목</h2>
-                <span class="panel-pill" data-selected-kind>선택 없음</span>
-              </div>
-              <button type="button" class="text-button" data-action="duplicate">복제</button>
-            </div>
-
-            <div class="empty-state" data-selected-empty>가구나 그린 벽을 선택하면 형태, 위치, 마감을 수정할 수 있습니다.</div>
-            <div class="selection-helper">
-              <strong>가구 크기 조절</strong>
-              <span>가구를 선택한 뒤 <code>크기</code> 또는 <code>S</code>를 눌러 핸들을 드래그하거나 아래에서 정확한 치수를 입력하세요.</span>
-            </div>
-
-            <div class="selected-fields" data-selected-fields hidden>
-              <div class="form-grid">
-                <label class="field field-full">
-                  <span>이름</span>
-                  <input type="text" data-selection-input="label" placeholder="항목 이름" />
-                </label>
-                <label class="field">
-                  <span data-selection-label="width">가로</span>
-                  <input type="number" min="0.3" max="20" step="0.05" data-selection-input="width" />
-                </label>
-                <label class="field">
-                  <span data-selection-label="depth">세로</span>
-                  <input type="number" min="0.08" max="20" step="0.05" data-selection-input="depth" />
-                </label>
-                <label class="field">
-                  <span data-selection-label="height">높이</span>
-                  <input type="number" min="-1.5" max="6" step="0.05" data-selection-input="height" />
-                </label>
-                <label class="field">
-                  <span data-selection-label="x">위치 X</span>
-                  <input type="number" min="-20" max="20" step="0.05" data-selection-input="x" />
-                </label>
-                <label class="field">
-                  <span data-selection-label="z">위치 Z</span>
-                  <input type="number" min="-20" max="20" step="0.05" data-selection-input="z" />
-                </label>
-                <label class="field">
-                  <span data-selection-label="rotation">회전</span>
-                  <input type="number" min="-180" max="180" step="15" data-selection-input="rotation" />
-                </label>
-                <label class="field">
-                  <span data-selection-label="color">마감</span>
-                  <input type="color" data-selection-input="color" />
-                </label>
-              </div>
-
-              <div class="selection-actions">
-                <button type="button" class="toolbar-pill toolbar-pill-strong" data-action="focus">초점 맞추기</button>
-                <button type="button" class="toolbar-pill" data-action="delete">삭제</button>
-              </div>
             </div>
           </section>
 
@@ -1402,21 +1397,21 @@ export class InteriorStudio {
     if (!hasCloudStorageConfig()) {
       this.dom.cloud.statusBadge.textContent = "로컬 전용";
       this.dom.cloud.statusText.textContent =
-        "현재는 이 브라우저의 로컬 저장과 장면 링크 공유만 사용합니다. Supabase 연결 정보를 넣으면 여러 기기 자동저장과 짧은 프로젝트 링크를 사용할 수 있습니다.";
+        "현재는 로컬 저장과 장면 링크 공유만 사용 중입니다. Supabase를 연결하면 여러 기기 자동저장이 가능합니다.";
       return;
     }
 
     if (!this.cloudProjectId) {
       this.dom.cloud.statusBadge.textContent = "준비됨";
       this.dom.cloud.statusText.textContent =
-        "프로젝트 코드를 입력하면 클라우드 저장과 공유 링크가 켜집니다. 같은 프로젝트 코드를 쓰면 다른 기기에서도 이어서 편집할 수 있습니다.";
+        "프로젝트 코드를 입력하면 같은 장면을 다른 기기에서도 이어서 편집할 수 있습니다.";
       return;
     }
 
     this.dom.cloud.statusBadge.textContent = this.cloudAutosaveEnabled ? "자동저장 켜짐" : "클라우드 준비";
     this.dom.cloud.statusText.textContent = this.cloudAutosaveEnabled
-      ? `프로젝트 코드 ${this.cloudProjectId}로 자동저장 중입니다. 편집 내용은 잠시 후 클라우드에 반영됩니다.`
-      : `프로젝트 코드 ${this.cloudProjectId}가 준비되었습니다. 수동으로 저장하거나 자동저장을 켤 수 있습니다.`;
+      ? `프로젝트 코드 ${this.cloudProjectId}로 자동저장 중입니다.`
+      : `프로젝트 코드 ${this.cloudProjectId}가 준비되었습니다.`;
   }
 
   private buildSnapshot(): SceneSnapshot {
@@ -2558,7 +2553,7 @@ export class InteriorStudio {
             ? this.draftAnchor
               ? "단차 구역 시작점이 고정되었습니다. 반대쪽 점을 클릭해 구역을 완성하세요."
               : "단차 구역 모드입니다. 평면 보기에서 첫 점과 반대쪽 점을 차례로 클릭하세요."
-          : "선택된 항목이 없습니다. 가구를 추가한 뒤 선택 모드에서 크기 핸들을 쓰거나 오른쪽에서 정확한 치수를 입력하세요.";
+          : "선택된 항목이 없습니다. 가구를 추가한 뒤 선택 모드에서 크기 핸들을 쓰거나 아래 작업 패널에서 정확한 치수를 입력하세요.";
       return;
     }
 
@@ -2571,7 +2566,7 @@ export class InteriorStudio {
       const size = this.getFurnitureSize(selected.item);
       this.syncSelectionLabels("furniture");
       this.dom.selectedKind.textContent = "가구";
-      this.dom.selectionBanner.textContent = `${selected.item.label} 선택됨. S 또는 크기 핸들로 조절하거나 오른쪽에서 정확한 치수를 입력하세요.`;
+      this.dom.selectionBanner.textContent = `${selected.item.label} 선택됨. S 또는 크기 핸들로 조절하거나 아래 작업 패널에서 정확한 치수를 입력하세요.`;
       this.dom.selectionInputs.label.value = selected.item.label;
       this.dom.selectionInputs.width.value = size.x.toFixed(2);
       this.dom.selectionInputs.depth.value = size.z.toFixed(2);
